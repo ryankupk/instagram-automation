@@ -2,25 +2,51 @@ import instagrapi
 import inquirer
 import os
 import hashlib
-from requests import post
-from json import dumps
-from copy import deepcopy
+import requests
+import json
 from dataclasses import dataclass
 
 @dataclass
 class Location:
-    name: str
-    latitude: float
-    longitude: float
+    name: str = None
+    latitude: float = None
+    longitude: float = None
 
-@dataclass
 class Post:
     caption: str
     content_path: str
-    upload_id: str
-    user_tags: list[instagrapi.types.Usertag]
-    location: Location
-    extra_data: dict
+    upload_id: str = None
+    user_tags: list[instagrapi.types.Usertag] = []
+    location: Location = None
+    extra_data: dict = {}
+    
+    def __init__(self, fields: list[str], path: str):
+        post_extensions = ('jpg', 'jpeg')
+        for field in fields:
+            if field.endswith(post_extensions):
+                setattr(self, 'content_path', field)
+                self.content_path = field
+            elif field.split('.')[0] == 'caption':
+                self.caption = open(f"{path}/{field}").read()
+            elif field.split('.')[0] == 'upload_id':
+                self.upload_id = open(f"{path}/{field}").read()
+            elif field.split('.')[0] == 'user_tags':
+                user_tags = []
+                with open(f"{path}/{field}", 'r') as f:
+                    for tag_params in f.read().splitlines():
+                        for tag_param in tag_params.split(','):
+                            user_tag = instagrapi.types.Usertag(tag_param[0], tag_param[1], tag_param[2])
+                            user_tags.append(user_tag)
+                self.user_tags = user_tags
+            elif field.split('.')[0] == 'location':
+                with open(f"{path}/{field}", 'r') as f:
+                    location_params = f.read().splitlines()
+                self.location = Location(location_params[0], location_params[1], location_params[2])
+            elif field.split('.')[0] == 'extra_data':
+                with open(f"{path}/{field}", 'r') as f:
+                    extra_data = json.load(f)
+                self.extra_data = extra_data
+
 
 def get_parameters():
     questions: list[inquirer.Text] = [
@@ -46,7 +72,7 @@ def get_serializable_members(obj):
             attr = getattr(obj, attr_name)
             if not callable(attr):  # Skip callable attributes (methods)
                 try:
-                    dumps(attr)  # Try serializing the attribute
+                    json.dumps(attr)  # Try serializing the attribute
                     serializable_members.append(attr_name)
                 except (TypeError, OverflowError):
                     pass  # Skip non-serializable attributes
@@ -54,8 +80,6 @@ def get_serializable_members(obj):
 
 def upload_posts(config, count):
     count = int(count)
-
-    required_items = ["caption.txt", "image.jpg"]
 
     cl = instagrapi.Client()
     try:
@@ -69,6 +93,7 @@ def upload_posts(config, count):
         for subdir in dirs:
             if posted_count >= count > 0:
                 break
+
             subdir_path = os.path.join(root, subdir)
 
             idempotency_key = get_idempotency_key(subdir_path)
@@ -81,17 +106,21 @@ def upload_posts(config, count):
                         continue
                         
             files = os.listdir(subdir_path)
+            try:
+                post = Post(files, subdir_path)
+            except Exception as e:
+                print(e)
+                raise e
 
-            # this is very stupid!!!
-            for required_item in required_items:
-                if required_item not in files:
-                    print(f"Required item {required_item} not found in directory {subdir}, skipping...")
-                    continue
-            
             try:
                 media = cl.photo_upload(
-                    path=os.path.join(subdir_path, "image.jpg"),
-                    caption=open(os.path.join(subdir_path, "caption.txt")).read(),
+                    path=os.path.join(subdir_path, post.content_path),
+                    caption=post.caption,
+                    # TODO: make the following work
+                    # upload_id=post.upload_id,
+                    # usertags=post.user_tags,
+                    # location=post.location,
+                    # extra_data=post.extra_data,
                 )
             except Exception as e:
                 print(e)
@@ -101,18 +130,18 @@ def upload_posts(config, count):
                 f.write(f"{idempotency_key}\n")
 
             if "discord_webhook" in config:
-                payload = {"content": get_serializable_members(media)}
+                payload = json.dumps({"content": {key:value for key, value in post.__dict__.items() if not key.startswith('__') and not callable(key)}})
                 headers = {"Content-Type": "application/json"}
-                res = post(config["discord_webhook"]["url"], data=dumps(payload), headers=headers)
-                print(config["discord_webhook"]["url"])
-                print(res.json())
+                # TODO: make the following work
+                response = requests.post(config["discord_webhook"]["url"], data=payload, headers=headers)
+                print(response.json())
 
             posted_count += 1
             print(f"Posted {posted_count} posts")
                     
 
-def main(count: int):
-    config = read_config(["authenticated_user", "upload"])
+def main(config_file_path: str, count: int):
+    config = read_config(config_file_path, ["authenticated_user", "upload"])
     upload_posts(config, count)
 
 if __name__ == "__main__":

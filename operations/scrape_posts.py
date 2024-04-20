@@ -43,8 +43,8 @@ def scrape_posts(config: dict, username: str, start: str, count: str):
         else:
             pass
 
-def main(username: str, start: int, count: int) -> None:
-    config = read_config(["authenticated_user", "download"])
+def main(config_file_path: str, username: str, start: int, count: int) -> None:
+    config = read_config(config_file_path, ["authenticated_user", "download"])
     scrape_posts(config, username, start, count)
         
 if __name__ == '__main__':
