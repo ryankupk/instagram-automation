@@ -1,0 +1,9 @@
+[Unit]
+Description=Timer for `upload_posts.service` systemd service to call the `upload_posts.py` daily at noon Mountain time
+
+[Timer]
+OnCalendar=*-*-* 18:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
